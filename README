@@ -1,0 +1,26 @@
+A simple webcrawler designed for CS4700 - Network Fundamentals. The crawler is
+specifically designed to find "Secret Flags" that are contained somewhere on the
+web server at cs5700.ccs.neu.edu. The crawler ignores pages not contained on the
+server for the following reasons:
+       1. The crawler is not polite and will make requests without adhering to
+          robots.txt.
+       2. The purpose of this crawler is to find secret flags contained
+          exclusively on the server at cs5700.ccs.neu.edu.
+The crawler is designed to be relatively modular, and can be adapted for more
+broad usage without too much trouble. The HTMLParser python module is used to
+parse the html tags, specifcally h2 tags, that contain the secret flags.
+
+TODO:
+The current post request is almost entirely hard-coded into the script right now.
+This and other procedural components of the code will be changed to conform to
+the more modular design of the rest of the code. I will shortly have a version
+where get, post, and parsing functionality is open to uses outside the
+cs5700.ccs.neu.edu server.
+
+The list data structure is not appropriate for storing visited sites. I'll be
+switching it to the built in dictionary python data structure by using a function
+to create hashes for a given website. This will be a huge performance gain (hash
+table vs list for code that has many lookups).
+
+Long-term:
+Optimize portions of the code by rewriting in C. 

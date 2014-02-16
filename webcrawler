@@ -1,0 +1,229 @@
+#!/usr/bin/python
+from sys import *
+from socket import *
+from HTMLParser import *
+import re
+
+fakebook_url = "cs5700.ccs.neu.edu"
+DEFAULT_PORT = 80
+MAX_BUFF = 10000
+VISITED = ["/fakebook/", "/fakebook"]
+NEED_VISIT = []
+SECRET_FLAGS = []
+CSRF_TOKEN = ""
+CSRF_FLAG = False
+SESSION_ID = ""
+NUM_GETS = 0
+USER = ""
+PASSWORD = ""
+setrecursionlimit(5000)
+
+#Looks for new links
+class LinkHTMLParser(HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        if tag == 'a':
+            for name, value in attrs:
+                if name == 'href':
+                    if re.search('/fakebook/', value) == None:
+                        return
+                    path = re.search('/fakebook/.*', value)
+                    path = path.group()
+                    if got_link(path) == True:
+                        return path
+                    else:
+                        return None
+
+#Looks for secret flags
+class FlagHTMLParser(HTMLParser):
+    in_tag = False
+    def handle_starttag(self, tag, attrs):
+        if tag == 'h2':
+            for name, value in attrs:
+                if name == 'class' and value == 'secret_flag':
+                    self.in_tag = True
+    def handle_data(self, data):
+        global SECRET_FLAGS
+        if self.in_tag == True:
+            flag = data[6:]
+            if flag not in SECRET_FLAGS:
+                SECRET_FLAGS.append(flag)
+            self.in_tag = False
+
+#Parses the POST response to get the csrf token
+class PostHTMLParser(HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        if tag == 'input':
+            for SPECIAL_NAME, value in attrs:
+                global CSRF_FLAG
+                global CSRF_TOKEN
+                if CSRF_FLAG == True:
+                    CSRF_TOKEN = value
+                    CSRF_FLAG = False
+                if value == 'csrfmiddlewaretoken':
+                    CSRF_FLAG = True
+
+def got_link(link):
+    global VISITED
+    global NEED_VISIT
+    if link in VISITED:
+        return None
+    NEED_VISIT.append(link)
+    return True
+
+#Establish connection with server
+def get_connection():
+    try:
+        connection = socket(AF_INET, SOCK_STREAM)
+    except: get_connection()
+    connection.connect((fakebook_url, DEFAULT_PORT))
+    return connection
+
+#HTTP GET message to view HTML pages on Fakebook
+def get(connection, path):
+    global NUM_GETS
+    NUM_GETS = NUM_GETS + 1
+    msg = "GET %s HTTP/1.1\r\nHost: %s\r\nCookie: csrftoken=%s; sessionid=%s\r\nConnection:keep-alive\r\n\r\n" % (path, fakebook_url, CSRF_TOKEN, SESSION_ID)
+    connection.sendall(msg)
+    response = connection.recv(MAX_BUFF)
+    return response
+
+#HTTP POST message to server to log-in to Fakebook
+def post(connection, user, password):
+    global SESSION_ID
+    global CSRF_TOKEN
+    msg = "POST /accounts/login/?next=/fakebook/ HTTP/1.1\r\n" + "Host:cs5700.ccs.neu.edu:80\r\nReferer: http://cs5700.ccs.neu.edu/accounts/login/?next=/fakebook/\r\nCookie:csrftoken="+CSRF_TOKEN+"; sessionid="+SESSION_ID+"\r\nConnection:keep-alive\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 109\r\n\r\ncsrfmiddlewaretoken="+CSRF_TOKEN+"&username="+user+"&password="+password+"&next=%2Ffakebook%2F\r\n\r\n"
+    connection.sendall(msg)
+    response = connection.recv(MAX_BUFF)
+    SESSION_ID = get_session_id(response)
+    return response
+
+#Check the HTTP Response Code for errors
+def http_code_checker(message):
+    global SESSION_ID
+    if "200 OK" in message:
+        return (200, message)
+    elif "500 INTERNAL" in message:
+        return (500, message)
+    elif "404 NOT" in message:
+        return (404, message)
+    elif "403 FORBIDDEN" in message:
+        return (403, message)
+    elif "302 FOUND" in message:
+        SESSION_ID = get_session_id(message)
+        ret = re.search(r'[.\s]*Location: .*', message)
+        if ret == None:
+            return (302, message)
+        ret = ret.group()
+        ret = re.search(r'\.edu/.*', ret)
+        if ret == None:
+            return (302, message)
+        ret = ret.group()
+        length = len(ret)
+        ret = ret[4:(length)]
+        if ret not in NEED_VISIT:
+            NEED_VISIT.append(ret)
+        return (302, ret)
+    elif "301 MOVED" in message:
+        SESSION_ID = get_session_id(message)
+        ret = re.search(r'[.\s]*Location: .*', message)
+        if ret == None:
+            return (301, message)
+        ret = ret.group()
+        ret = re.search(r'\.edu/.*', ret)
+        if ret == None:
+            return (301, message)
+        ret = ret.group()
+        length = len(ret)
+        ret = ret[4:(length)]
+        if ret not in NEED_VISIT:
+            NEED_VISIT.append(ret)
+        return (301, ret)
+    return (200, message)
+
+#Get the session id for the cookie
+def get_session_id(form):
+    global SESSION_ID
+    new_form = re.search(r'sessionid=[A-Za-z0-9]{32}', form)
+    if new_form == None:
+        return SESSION_ID
+    new_form = new_form.group()
+    ret = new_form[10:]
+    length = len(ret)
+    ret = ret[0:(length)]
+    SESSION_ID = ret
+    return ret
+
+#Start connection to Fakebook with username and password
+def start(user, password):
+    global USER
+    global PASSWORD
+    global SESSION_ID
+    USER = user
+    PASSWORD = password
+    connection = get_connection()
+    initial_response = get(connection, '/accounts/login/?next=/fakebook/')
+    post_parser = PostHTMLParser()
+    SESSION_ID = get_session_id(initial_response)
+    post_parser.feed(initial_response)
+    post_response = post(connection, user, password)
+    SESSION_ID = get_session_id(post_response)
+    find_flags(connection)
+
+#Crawls pages looking for flags
+def find_flags(connection):
+    global NEED_VISIT
+    global VISITED
+    global SECRET_FLAGS
+    global USER
+    global PASSWORD
+    global NUM_GETS
+    get_form = get(connection, '/fakebook/')
+    form = http_code_checker(get_form)
+    link_parser = LinkHTMLParser()
+    link_parser.feed(get_form)
+    flag_parser = FlagHTMLParser()
+
+    for link in NEED_VISIT:
+        get_response = get(connection, link)
+        check = http_code_checker(get_response)
+        if NUM_GETS % 99 == 0:
+            break
+        if check[0] == 200:
+            link_parser.feed(get_response)
+            flag_parser.feed(get_response)
+            if link in NEED_VISIT:
+                NEED_VISIT.remove(link)
+            VISITED.append(link)
+        elif check[0] == 500:
+            break
+        elif check[0] == 302:
+            NEED_VISIT.remove(link)
+            continue
+        elif check[0] == 301:
+            NEED_VISIT.remove(link)
+            continue
+        elif check[0] == 403:
+            NEED_VISIT.remove(link)
+            continue
+        elif check[0] == 404:
+            NEED_VISIT.remove(link)
+            continue
+        if len(SECRET_FLAGS) == 5:
+            for item in SECRET_FLAGS:
+                print item
+            exit()
+        #print "%d | %d | %d" % (len(NEED_VISIT), NUM_GETS, len(VISITED))
+    start(USER, PASSWORD)
+
+def main():
+    global USER
+    global PASSWORD
+    if len(argv) != 3:
+        print "Usage: ./webcrawler [username] [password]"
+        exit(1)
+    USER = argv[1]
+    PASSWORD = argv[2]
+    start(USER, PASSWORD)
+
+if __name__ == "__main__":
+    main()
