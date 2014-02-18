@@ -70,6 +70,9 @@ def got_link(link):
     NEED_VISIT.append(link)
     return True
 
+def link_hash(link):
+    pass
+
 #Establish connection with server
 def get_connection():
     try:
