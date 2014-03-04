@@ -11,6 +11,8 @@ broad usage without too much trouble. The HTMLParser python module is used to
 parse the html tags, specifcally h2 tags, that contain the secret flags.
 
 TODO:
+Global variables are bad, mmkay.
+
 The current post request is almost entirely hard-coded into the script right now.
 This and other less lenient components of the code will be changed to conform to
 the more modular design of the rest of the code. I will shortly have a version
